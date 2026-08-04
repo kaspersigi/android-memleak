@@ -371,6 +371,37 @@ cc_binary {
 }
 
 cc_object {
+    name: "memleak.bpf.o",
+    srcs: ["memleak.bpf.c"],
+    defaults: ["bcc_bpf_defaults"],
+}
+
+cc_genrule {
+    name: "memleak.skel.h",
+    srcs: [":memleak.bpf.o"],
+    out: ["memleak.skel.h"],
+    defaults: ["bpf_skeleton_hdr_defaults"],
+}
+
+cc_binary {
+    name: "memleak",
+    srcs: [
+        "memleak.c",
+        "uprobe_helpers.c",
+    ],
+    generated_headers: ["memleak.skel.h"],
+    defaults: ["bcc_binary_defaults"],
+    static_executable: true,
+    static_libs: [
+        "libbpf",
+        "libelf",
+        "libz",
+        "libc++_static",
+    ],
+    shared_libs: [],
+}
+
+cc_object {
     name: "offcputime.bpf.o",
     srcs: ["offcputime.bpf.c"],
     defaults: ["bcc_bpf_defaults"],
