@@ -65,9 +65,9 @@ adb shell chmod 0755 /data/local/tmp/memleak
 
 ## 基本用法
 
-### qrd8750 Camera Provider：HWASan 实机示例
+### QRD8750/QRD876 Camera Provider：HWASan 实机示例
 
-qrd8750 实机上的 `vendor.qti.camera.provider-service_64` 是 HWASan 进程，
+已验证设备上的 `vendor.qti.camera.provider-service_64` 是 HWASan 进程，
 实际映射的 allocator ELF 是：
 
 ```text
@@ -78,16 +78,16 @@ qrd8750 实机上的 `vendor.qti.camera.provider-service_64` 是 HWASan 进程�
 
 ```sh
 /data/local/tmp/memleak \
-  -p "$(pidof vendor.qti.camera.provider-service_64)" \
+  -p "$(pidof -s vendor.qti.camera.provider-service_64)" \
   -O /apex/com.android.runtime/lib64/bionic/hwasan/libc.so \
-  --stack-storage-size 32768 \
+  --stack-storage-size 65536 \
   -T 20 1
 ```
 
 若从主机直接执行，要用单引号保证 `pidof` 在 Android 设备而不是主机上展开：
 
 ```sh
-adb shell '/data/local/tmp/memleak -p "$(pidof vendor.qti.camera.provider-service_64)" -O /apex/com.android.runtime/lib64/bionic/hwasan/libc.so --stack-storage-size 32768 -T 20 1'
+adb shell '/data/local/tmp/memleak -p "$(pidof -s vendor.qti.camera.provider-service_64)" -O /apex/com.android.runtime/lib64/bionic/hwasan/libc.so --stack-storage-size 65536 -T 20 1'
 ```
 
 普通、非 HWASan 的 Android arm64 进程通常使用以下命令：
@@ -96,12 +96,12 @@ adb shell '/data/local/tmp/memleak -p "$(pidof vendor.qti.camera.provider-servic
 /data/local/tmp/memleak \
   -p "$(pidof vendor.qti.camera.provider-service_64)" \
   -O /system/lib64/libc.so \
-  --stack-storage-size 32768 \
+  --stack-storage-size 65536 \
   -T 20 1
 ```
 
-第二条命令只用于说明普通 Bionic libc 的写法，不能用于当前 qrd8750 上的
-HWASan Camera Provider。实测对该进程指定 `/system/lib64/libc.so` 时，uprobes
+第二条命令只用于说明普通 Bionic libc 的写法，不能用于上述 HWASan Camera
+Provider。实测对该进程指定 `/system/lib64/libc.so` 时，uprobes
 可以创建且程序会显示 `Attaching to pid`，但由于目标进程没有映射这个 ELF，
 业务过程中会持续输出 `Top 0`，造成“工具运行正常但没有采到数据”的假象。
 
@@ -114,7 +114,7 @@ PID="$(adb shell pidof -s vendor.qti.camera.provider-service_64)"
 adb shell "grep 'libc.so' /proc/$PID/maps"
 ```
 
-qrd8750 HWASan 实机应看到类似：
+HWASan 实机应看到类似：
 
 ```text
 /apex/com.android.runtime/lib64/bionic/hwasan/libc.so
@@ -150,7 +150,7 @@ pidof -s vendor.qti.camera.provider-service_64
 | `/data/local/tmp/memleak` | 全静态 ARM64 用户态程序；BPF object 已通过 skeleton 嵌入二进制。 |
 | `-p "$(pidof ...)"` | 在命令执行时查找 Camera Provider PID，并只跟踪该 PID 的用户态 allocator 调用。 |
 | `-O .../hwasan/libc.so` | 在目标实际映射的 HWASan Bionic libc 上挂载 malloc/free/calloc/realloc/mmap 等 uprobes。 |
-| `--stack-storage-size 32768` | stack trace map 最多保存 32768 条唯一调用栈；它不是调用栈深度，也不是输出条数。 |
+| `--stack-storage-size 65536` | stack trace map 最多保存 65536 条唯一调用栈；它不是调用栈深度，也不是输出条数。 |
 | `-T 20` | 每次报告按 outstanding bytes 从大到小排序，只打印前 20 个 allocation stacks。 |
 | 最后的 `1` | 第一个位置参数 `INTERVAL`，表示每 1 秒生成一次报告。 |
 
@@ -161,166 +161,220 @@ pidof -s vendor.qti.camera.provider-service_64
 /data/local/tmp/memleak \
   -p "$(pidof -s vendor.qti.camera.provider-service_64)" \
   -O /apex/com.android.runtime/lib64/bionic/hwasan/libc.so \
-  --stack-storage-size 32768 \
+  --stack-storage-size 65536 \
   -T 20 1 1
 ```
 
 其中第一个 `1` 是输出间隔，第二个 `1` 是输出次数。
 
-#### 两类分析目标与推荐运行模式
+#### 已确认的两条虚拟内存工作流
 
-相机 native heap 分析应拆成两个独立模式。不要为了同时获取所有信息，长期把
-`-a`、`-t` 和 1 秒输出全部打开。
+Camera Provider 的虚拟内存工作已经收敛为两条互补主线。两条链路使用同一个
+memleak BPF address map，但输出目标不同，不建议为了“一次拿全”而长期同时打开
+`-a`、`-t`、全 size 和高频周期报告。
+
+| 方向 | 核心输出 | 更适合回答的问题 | 主要不足 |
+| --- | --- | --- | --- |
+| 方向一：`bpf_printk + Perfetto` 测试 | 与业务 trace 同时间轴的 VM 曲线、CSV、PNG | 哪个业务阶段发生申请/释放；峰值、回落和重复操作趋势如何 | trace 事件本身没有调用栈；`bpf_printk` 不保证高频无损 |
+| 方向二：纯 memleak 分析 | 最后完整 outstanding 快照及申请调用栈 | 业务结束后还剩什么；候选来自 CamX/CHI/CSL、线程还是 HWASan 哪条路径 | 不具备 Perfetto 业务切片的精细时间关联 |
 
 ```mermaid
 flowchart TD
-    A[确认目标 PID] --> B[从 proc PID maps 确认实际 libc]
-    B --> C{选择分析目标}
+    A[确认目标 PID] --> B[从 proc PID maps 确认实际 allocator]
+    B --> C{本次目标}
 
-    C -->|业务前后泄漏候选| D[模式一：默认 outstanding 采集]
-    D --> E[等待 Attaching to pid]
-    E --> F[执行业务流程]
-    F --> G[发送 SIGINT]
-    G --> H[比较多轮结束后的 bytes 和 count]
+    C -->|业务测试和时间关联| T1[Perfetto 开始录制]
+    T1 --> T2[memleak 使用 -t 输出 bpf_printk]
+    T2 --> T3[执行业务并等待释放]
+    T3 --> T4[提取 CSV 和 PNG]
+    T4 --> T5[注入 VMAlloc VMFree VMTotal 轨道]
 
-    C -->|地址和释放配对详情| I[模式二：使用 -a、-t 和大小过滤]
-    I --> J[启动 trace_pipe reader]
-    J --> K[短时间执行业务]
-    K --> L[按 address 和 size 关联 alloc/free]
-    L --> M[申请栈可用；free 栈当前不支持]
+    C -->|最终泄漏候选和堆栈归因| A1[memleak 不使用 -t]
+    A1 --> A2[执行业务并等待稳定]
+    A2 --> A3[SIGINT 输出最后快照]
+    A3 --> A4[选择最后完整时间戳]
+    A4 --> A5[比较相同调用栈 bytes 和 count]
 ```
 
-##### 模式一：业务窗口 outstanding/leak 候选分析
+##### 方向一：`bpf_printk + Perfetto` 业务测试
 
-目标是回答：从 memleak 完成附着到业务结束，哪些申请没有观察到对应释放；
-同一申请栈的 outstanding bytes/count 是否在重复业务后持续增长。
+这个方向把 memleak 的 alloc/free 事件当作业务 trace 的一个数据源。它重在测试：
+把 Camera open、configure、preview、capture、flush、close 等业务 slice 与 VM 峰值
+和释放时刻放在同一时间轴上，观察多次操作后曲线是否回到相同底座。
 
-推荐命令：
+当前配套的跨平台主机启动器位于
+`perf_tools/android/memory/run_memleak.py`。默认进程名、size、stack map、Top 数和
+间隔等价于：
+
+```sh
+/data/local/tmp/memleak \
+  -p "$(pidof -s vendor.qti.camera.provider-service_64)" \
+  -O /system/lib64/libc.so \
+  --stack-storage-size 65536 \
+  -t -z 262144 -T 1 3600
+```
+
+QRD8750/QRD876 的 HWASan Camera Provider 日常只需要指定 allocator 简写：
+
+```sh
+cd /path/to/perf_tools/android/memory
+python3 run_memleak.py --hwasan
+```
+
+其中 `-t` 把成功 alloc 和已匹配 free 的 address/size 写入 `bpf_printk`；
+`-z 262144` 只跟踪单次大小至少 256 KiB 的申请；`-T 1 3600` 让 stdout 周期报告
+保持低频，不影响逐事件写入。末尾没有 `INTERVALS`，所以持续运行到 `Ctrl+C`。
+
+Perfetto 侧配套脚本位于 `perf_tools/android/perfetto`：
+
+| 脚本 | 场景 | Trace 格式 |
+| --- | --- | --- |
+| `2.catch-in_tree-short_trace.sh/.bat` | in-tree 短 trace | compressed |
+| `3.catch-in_tree-long_trace.sh/.bat` | in-tree 长 trace | decompressed |
+| `4.catch-out_of_tree-short_trace.sh/.bat` | out-of-tree 短 trace | compressed |
+| `5.catch-out_of_tree-long_trace.sh/.bat` | out-of-tree 长 trace | decompressed |
+
+脚本 2～5 在 trace 拉取后都会依次运行：
+
+```sh
+python3 analys/sql/analys_vmalloc.py \
+  -f <trace> -o <output_dir>
+
+python3 analys/perfetto/inject_vmalloc.py \
+  -t <trace> -c <output_dir>/vm_raw_events.csv -o <trace>
+```
+
+`analys_vmalloc.py` 默认只分析
+`vendor.qti.camera.provider-service_64`，生成：
+
+- `vm_raw_events.csv`：逐条 alloc/free 的时间戳、PID/TID、address 和 size；
+- `vm_summary.csv`：事件数、峰值、结束值、未释放地址数和异常配对统计；
+- `process_<pid>_vmalloc_analysis.png`：VMAlloc、VMFree、VMTotal 曲线。
+
+`inject_vmalloc.py` 会在原 trace 中增加五条 Perfetto counter 轨道：
+
+| 轨道 | 含义 |
+| --- | --- |
+| `VMAlloc` | trace 观测范围内成功申请字节数的累计曲线 |
+| `VMFree` | memleak 已匹配释放字节数的累计曲线 |
+| `VMTotal` | 按 address map 重建的当前 outstanding 曲线 |
+| `VMAlloc Value` | 每次申请 size 的短脉冲竖线 |
+| `VMFree Value` | 每次释放 size 的短脉冲竖线 |
+
+推荐用两个终端保证事件窗口完整：
+
+1. 先启动脚本 2～5，让 Perfetto 进入录制；
+2. 再启动 `run_memleak.py --hwasan`，等待启动器显示 memleak 正在前台运行；
+3. 执行业务，并在 Camera 关闭后等待释放稳定；
+4. 保持 Perfetto 仍在录制，先按 `Ctrl+C` 停止 memleak；
+5. 再停止 Perfetto，等待 CSV/PNG 生成和 VM 轨道注入完成。
+
+`run_memleak.py` 把 memleak stdout/stderr 重定向到
+`/data/local/tmp/mlk_evt.log`，所以主机启动终端不会直接显示
+`Attaching to pid`。对附着时刻有严格要求时，可从另一个终端确认：
+
+```sh
+adb shell grep 'Attaching to pid' /data/local/tmp/mlk_evt.log
+```
+
+如果 memleak 早于 Perfetto 启动，trace 中可能先看到某个 address 的 free、却没有
+看到对应 alloc。分析器会根据这种 free 推断 trace 起点已有的已知 allocation，
+避免简单地把 VMTotal 算成负数；但在 trace 前申请、且 trace 结束时仍未释放的
+对象不会产生任何 trace 事件，仍然无法恢复。因此 VMTotal 是本次 memleak/trace
+观测窗口的虚拟内存曲线，不是目标进程完整 VSS，也不等同于 RSS/PSS。
+
+测试链路重点看：业务 slice 附近的 VMTotal 峰值、close 后的回落速度、重复操作后
+底座是否逐轮抬升。VMAlloc 和 VMFree 是累计量，本身不会回落；不能仅因为 VMAlloc
+持续上升就判断泄漏。
+
+##### 方向二：纯 memleak 最终快照分析
+
+这个方向不使用 `-t`，让 memleak 专注维护 outstanding address map、保存申请
+stack id 并周期性符号化。它重在分析：业务结束后查看最后一个完整时间戳，利用
+调用栈定位仍未释放的候选来源。
+
+推荐的底层命令是：
 
 ```sh
 /data/local/tmp/memleak \
   -p "$(pidof -s vendor.qti.camera.provider-service_64)" \
   -O /apex/com.android.runtime/lib64/bionic/hwasan/libc.so \
-  --stack-storage-size 32768 \
-  -T 50 5
+  --stack-storage-size 65536 \
+  -z 262144 -T 50 5
 ```
 
-该模式不要增加 `-s`、`-a` 或 `-t`：
+当前配套的跨平台脚本位于
+`perf_tools/android/memory/memleak_leak_check.py`：
 
-- 保持默认 `sample-rate=1`，否则只检查采样子集，可能漏掉小规模泄漏。
-- 不使用 `-a`，避免周期性打印大量地址。
-- 不使用 `-t`，避免为每次 alloc/free 调用 `bpf_printk`。
-- 把间隔设为 5 秒，降低用户态遍历 outstanding allocation map、符号化和输出的
-  频率。`-T` 只限制显示多少个聚合栈，不会减少 BPF 侧实际采集量。
+```sh
+cd /path/to/perf_tools/android/memory
+
+# QRD8750/QRD876 HWASan Camera Provider
+python3 memleak_leak_check.py --hwasan
+
+# 普通 Bionic libc 是默认值
+python3 memleak_leak_check.py
+```
+
+脚本会等待 `Ctrl+C`，然后只向本次设备端 memleak PID 发送 `SIGINT`，等待最后报告
+刷新和 BPF links 清理，拉取日志并验证最后报告是否完整。默认输出目录包含：
+
+- `memleak.log`：完整原始输出；
+- `timeline.csv`：每个报告的完整性和显示范围 bytes/count；
+- `last_snapshot.csv`：最后完整快照的候选栈；
+- `last_snapshot.txt`：可读摘要和完整调用栈。
+
+该模式保持默认 `sample-rate=1`，不建议为泄漏否定结论使用 `-s` 抽样；默认不使用
+`-a`，避免输出大量 address；默认不使用 `-t`，避免逐事件 trace 开销。`-T 50`
+只限制用户态显示的聚合栈数量，不减少 BPF 侧 address map 的实际跟踪量。需要只看
+长寿命候选时可使用：
+
+```sh
+python3 memleak_leak_check.py --hwasan --older-ms 10000
+```
+
+2026-08-06 QRD876 实测中，首个报告为 321,172,992 bytes/44 allocations；5 秒后
+回落到 1,064,960 bytes/1 allocation，并在之后约 43 秒、10 个连续报告中完全
+稳定，即显示范围内约 99.67% 已释放。最终残留栈经过
+`__allocate_thread_mapping` → `pthread_create` →
+`CamX::OsUtils::ThreadCreateWithAttr`，并位于 BITML/Camera teardown 路径。
+
+这份 1.02 MiB 映射在不同测试中重复出现，值得作为候选跟踪；但单轮没有继续增长，
+不能直接定性为泄漏。更可靠的判据是在同一次附着中重复 5～10 轮 Camera
+打开/关闭：如果关闭后始终稳定为一份，更像常驻线程、缓存或 HWASan 保留映射；
+如果相同栈逐轮累积为 2、3、4 份，则形成线程生命周期泄漏的强证据。
 
 BPF 在申请成功时以 address 为 key 保存 size、时间戳和申请 stack id；在
-`free()`/`munmap()` 时按 address 查找并删除。报告中的 outstanding allocation
-就是在当前采样时仍留在 map 中的记录。因此“申请和释放是否成对”在该模式下是
-通过记录是否被删除间接判断，不是通过两个累计计数器直接判断。
+`free()`/`munmap()` 时按 address 查找并删除。因此纯 memleak 的 outstanding 是
+通过 address map 中是否仍存在记录判断，不是简单用累计 alloc 次数减 free 次数。
 
-2026-08-04 qrd8750 实测时间线：
+##### 方向一的低层排障补充
 
-```text
-23:22:48 sequence_start_attached
-23:22:50 launch_snapcam
-23:22:51 take_photo
-23:22:54 return_home
-23:22:57 observation_stop
-```
-
-主要变化如下：
-
-| 阶段 | 实际结果 |
-| --- | --- |
-| `23:22:45`～`23:22:50`，业务前 | 连续输出 `Top 0`。 |
-| `23:22:51`，相机启动/拍照 | HWASan additional stacks 为 603,979,776 bytes/36 allocations；CamX `OsUtils::MemMap -> CSLAlloc -> ImageBuffer` 为 126,880,768 bytes/57 allocations。 |
-| `23:22:52`，相机工作中 | HWASan additional stacks 增长到 738,197,504 bytes/44 allocations；另一个 CamX/CSL 栈达到 262,242,304 bytes/97 allocations。 |
-| `23:22:55`～`23:22:57`，回桌面后 | 最大 HWASan 项降到 16,777,216 bytes/1 allocation，并连续三次保持稳定；其余 Top 项主要是约 1,064,960 bytes 的线程映射。 |
-
-从 738,197,504 bytes/44 allocations 降到 16,777,216 bytes/1 allocation，证明
-关闭相机时大量分配已被 free/munmap 捕获并从 outstanding map 删除。最后稳定的
-记录只能称为本轮业务的“残留候选”，单次业务不能把它定性为泄漏。需要重复相同
-流程，观察回桌面后的稳定值是否逐轮阶梯式增长。
-
-##### 模式二：短时间地址、size 和 alloc/free 配对诊断
-
-目标是定位某一类可疑分配的具体地址和 size，并核验同一 address 是否出现对应
-free。当前版本需要组合两种输出：
-
-- `-a` 在 memleak 周期报告中输出当前 outstanding allocation 的 address、size
-  和申请调用栈。
-- `-t` 通过 `bpf_printk` 把 alloc/free address 和 size 写入 tracefs；这些事件
-  不在 memleak stdout 中，需要另行读取 `trace_pipe`。
-
-为控制事件量，先用 `-z` 只观察不小于 1 MiB 的分配：
+不经过 Perfetto 时，也可以用 `-a` 查看当前 outstanding 对象的 address/size，
+或直接消费 `trace_pipe` 查看 `-t` 事件。但 `trace_pipe` 是消费式接口，不应与
+Perfetto reader 同时使用：
 
 ```sh
-/data/local/tmp/memleak \
-  -p "$(pidof -s vendor.qti.camera.provider-service_64)" \
-  -O /apex/com.android.runtime/lib64/bionic/hwasan/libc.so \
-  --stack-storage-size 32768 \
-  -t -a -z 1048576 -T 5 1
+adb shell 'cat /sys/kernel/tracing/trace_pipe | grep -E "alloc entered|alloc exited|free entered"'
 ```
 
-另开终端，在 memleak 已显示 `Attaching to pid` 后读取事件：
-
-```sh
-adb shell 'cat /sys/kernel/tracing/trace_pipe | grep -E "alloc entered|alloc exited|free entered"' \
-  > memleak_alloc_free_events.log
-```
-
-`trace_pipe` 是消费式接口，会读取系统 tracefs 事件；应确认没有其他 reader 或
-关键 tracing 任务，只在短时间诊断窗口使用。结束业务后先向 memleak 发送
-`SIGINT`，再停止 trace reader。
-
-本次 `-a` 实测在一个申请栈下输出了 36 个独立的 16 MiB 地址，例如：
-
-```text
-603979776 bytes in 36 allocations from stack
-        addr = 0x6a9c943000 size = 16777216
-        addr = 0x6a97943000 size = 16777216
-        ...
-        0 [...] __init_additional_stacks... [hwasan/libc.so]
-```
-
-这表示 size 和地址属于当时仍 outstanding 的对象，后面的调用栈是这些对象的
-申请栈。对象被释放后，该地址会从后续 `-a` 报告消失。
-
-trace_pipe 实测采集到 396 条大于等于 1 MiB 的过滤后事件，其中包含 90 条
-`alloc entered`、86 条 `alloc exited` 和 220 条 `free entered`。在 reader 的
-有限时间窗口内，找到 43 组 address 和 size 都相同的完整 alloc/free 配对。
-例如：
-
-```text
-8105.411809: alloc exited, size = 13697024, result = 6a4be45000
-8105.460771: free entered, address = 6a4be45000, size = 13697024
-```
-
-该对象从申请返回到释放约 49 ms。free 数量大于本窗口内的 alloc 数量，是因为
-memleak 在 trace reader 启动前已经完成附着并开始维护 address map；reader 启动
-后会看到这些较早申请对象的 free。事件条数不能直接相减作为泄漏数，判断泄漏仍
-应以 outstanding map 为准。
-
-当前详情模式的能力边界：
+当前能力边界如下：
 
 | 信息 | 当前版本 |
 | --- | --- |
-| 申请 address 和 size | `-t` 可输出，`-a` 可显示仍 outstanding 的对象。 |
+| alloc/free address 和 size | `-t` 可输出；free size 来自原申请 address map。 |
+| outstanding 对象 address | `-a` 可在周期报告中显示。 |
 | 申请调用栈 | 可以；申请成功时保存 stack id。 |
-| free address 和原申请 size | 可以；按 address 查回原申请记录后输出。 |
 | free 调用栈 | 不支持；`gen_free_enter()` 当前没有调用 `bpf_get_stackid()`。 |
-| 无损、高频、长时间完整事件流 | 不保证；`-t` 使用 `bpf_printk/trace_pipe`，没有事件丢失计数。 |
+| 高频事件无损性 | 不保证；`bpf_printk` 没有事件丢失计数。 |
 
-因此，当前版本可以用相对详情模式低得多的输出和 trace 开销运行模式一，也可以
-短时间使用模式二完成地址、size 和申请栈定位及释放配对核验；它还不是“同时保存
-alloc stack 和 free stack 的高性能结构化事件采集器”。若后续确实需要 free
-stack 和可量化的事件丢失率，应增加独立的 BPF ring buffer 事件模式，而不是
-长期使用 `bpf_printk`。
+若后续需要 free stack、结构化事件和可量化丢失率，应增加独立 BPF ring buffer
+模式，而不是把 `bpf_printk` 当成长时间无损事件通道。
 
 ##### 性能与完整性的取舍
 
-- 默认模式每次申请仍会执行 uprobe、map 更新和用户栈采集，但不会输出每次事件；
-  它是长期泄漏趋势分析的首选。
+- 方向二每次申请仍会执行 uprobe、map 更新和用户栈采集，但不会输出每次事件；
+  它是最终 outstanding 和调用栈归因的首选。
 - `-a` 的额外成本主要在用户态遍历、保存和输出每个 outstanding 地址，适合短时
   缩小范围后的诊断。
 - `-t` 为每个匹配事件调用 `bpf_printk`，高频 Camera Provider 上应同时使用
@@ -331,7 +385,7 @@ stack 和可量化的事件丢失率，应增加独立的 BPF ring buffer 事件
   419 ms，未观察到启动失败或明显卡顿；这只是功能性冒烟结果，不是与 malloc
   debug 的严格性能基准。正式评估仍需固定版本和场景做多轮耗时、CPU 占用对比。
 
-#### 推荐的相机业务观测流程
+#### 方向二的纯 memleak 手工观测流程
 
 1. 停止 Snapcam、回到桌面，确认 Camera Provider PID。
 2. 启动 `memleak`，等待出现 `Attaching to pid ...` 和第一条周期报告。
@@ -416,7 +470,7 @@ stack 的 bytes/count 是否随循环次数单调增长。还可以使用 `-o` �
 /data/local/tmp/memleak \
   -p "$(pidof -s vendor.qti.camera.provider-service_64)" \
   -O /apex/com.android.runtime/lib64/bionic/hwasan/libc.so \
-  --stack-storage-size 32768 \
+  --stack-storage-size 65536 \
   -o 10000 -T 20 5
 ```
 
@@ -426,10 +480,10 @@ stack 的 bytes/count 是否随循环次数单调增长。还可以使用 `-o` �
   `should not be 0 in a shared library`。只要后续出现 `Attaching to pid` 并能在
   业务动作后输出实际 allocation stacks，该警告不是本次观测失败。
 - `WARNING: ... stack traces could not be displayed ... hash collisions` 表示 stack
-  trace map 容量或哈希冲突造成部分栈丢失。32768 是当前实机基线，并不保证每轮
-  都没有冲突；告警数字可能按缺少有效 stack id 的 allocation record 计数，不
-  一定等于唯一调用栈数量。可尝试 65536，但更大的 map 会占用更多 BPF locked
-  memory。出现该警告的报告不能视为完整栈集合。
+  trace map 容量或哈希冲突造成部分栈丢失。配套脚本当前使用 65536，但仍不保证
+  每轮都没有冲突；告警数字可能按缺少有效 stack id 的 allocation record 计数，
+  不一定等于唯一调用栈数量。更大的 map 会占用更多 BPF locked memory。出现该
+  警告的报告不能视为完整栈集合。
 - 持续 `Top 0` 可能只是目标空闲，也可能是 `-O` 指向了目标未映射的 libc。
   应先确认已经出现 `Attaching to pid`，再通过 `/proc/PID/maps` 核对 allocator，
   并触发确定会产生分配的业务动作。
@@ -441,12 +495,15 @@ stack 的 bytes/count 是否随循环次数单调增长。还可以使用 `-o` �
   partial unmap 也不能完全等同于简单的 address 删除。分析复杂失败场景时需要
   结合实现限制，不应把一次 `Top 0` 当成“绝对没有泄漏”的证明。
 
-### 保存 qrd8750 实机日志
+### 手工保存 QRD8750/QRD876 实机日志
+
+日常执行方向二时优先使用前述 `memleak_leak_check.py`；下面保留没有配套
+`perf_tools` 环境时的底层手工方式。
 
 当前程序没有 `-f` 参数。下面的命令把 stdout 和 stderr 一起写入设备文件：
 
 ```sh
-adb shell 'LOG=/data/local/tmp/memleak_camera_$(date +%Y%m%d_%H%M%S).log; /data/local/tmp/memleak -p "$(pidof -s vendor.qti.camera.provider-service_64)" -O /apex/com.android.runtime/lib64/bionic/hwasan/libc.so --stack-storage-size 32768 -T 20 1 >"$LOG" 2>&1'
+adb shell 'LOG=/data/local/tmp/memleak_camera_$(date +%Y%m%d_%H%M%S).log; /data/local/tmp/memleak -p "$(pidof -s vendor.qti.camera.provider-service_64)" -O /apex/com.android.runtime/lib64/bionic/hwasan/libc.so --stack-storage-size 65536 -T 20 1 >"$LOG" 2>&1'
 ```
 
 前台按 `Ctrl+C` 后，可使用 `adb pull` 拉取日志。若通过后台方式运行，应记录
@@ -504,14 +561,17 @@ adb shell '/data/local/tmp/memleak -p $(pidof -s com.example.app) -T 20 5' > mem
 当前程序没有 `-D` 参数。Android Toybox 提供 `nohup`，可以用以下方式替代：
 
 ```sh
-adb shell 'LOG=/data/local/tmp/memleak_log_$(date +%Y%m%d_%H%M%S).txt; nohup /data/local/tmp/memleak -p $(pidof -s com.example.app) -T 20 5 >"$LOG" 2>&1 </dev/null &'
+adb shell 'LOG=/data/local/tmp/memleak_log_$(date +%Y%m%d_%H%M%S).txt; PIDFILE=/data/local/tmp/memleak_example.pid; nohup /data/local/tmp/memleak -p $(pidof -s com.example.app) -T 20 5 >"$LOG" 2>&1 </dev/null & echo $! >"$PIDFILE"'
 ```
 
 停止后台任务：
 
 ```sh
-adb shell 'kill -INT $(pidof -s memleak)'
+adb shell 'kill -INT "$(cat /data/local/tmp/memleak_example.pid)"'
 ```
+
+不要用 `pidof -s memleak` 猜测本次工具 PID；设备上同时存在多个 memleak 会话时，
+它可能停止错误的实例。
 
 ### 跟踪新启动的命令
 
@@ -584,7 +644,9 @@ adb shell "/data/local/tmp/memleak -N {process_name} -T {MEM_LEAK_STACK_SIZE} {S
 等价的当前版本命令示例：
 
 ```sh
-adb shell 'LOG=/data/local/tmp/memleak_log_$(date +%Y%m%d_%H%M%S).txt; nohup /data/local/tmp/memleak -p $(pidof -s com.example.app) -T 20 5 >"$LOG" 2>&1 </dev/null &'
+adb shell 'LOG=/data/local/tmp/memleak_log_$(date +%Y%m%d_%H%M%S).txt; PIDFILE=/data/local/tmp/memleak_example.pid; nohup /data/local/tmp/memleak -p $(pidof -s com.example.app) -T 20 5 >"$LOG" 2>&1 </dev/null & echo $! >"$PIDFILE"'
 ```
 
-其中 `20` 是每次输出的 allocation stack 数量，`5` 是输出间隔秒数。
+其中 `20` 是每次输出的 allocation stack 数量，`5` 是输出间隔秒数。结束时读取
+上述 PID 文件并发送 `SIGINT`；在配套工具环境中优先直接使用
+`memleak_leak_check.py`。
