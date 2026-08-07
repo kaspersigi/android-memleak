@@ -65,7 +65,7 @@ adb shell chmod 0755 /data/local/tmp/memleak
 
 ## 基本用法
 
-### QRD8750/QRD876 Camera Provider：HWASan 实机示例
+### QRD8750 Camera Provider：HWASan 实机示例
 
 已验证设备上的 `vendor.qti.camera.provider-service_64` 是 HWASan 进程，
 实际映射的 allocator ELF 是：
@@ -214,7 +214,7 @@ flowchart TD
   -t -z 262144 -T 1 3600
 ```
 
-QRD8750/QRD876 的 HWASan Camera Provider 日常只需要指定 allocator 简写：
+QRD8750 的 HWASan Camera Provider 日常只需要指定 allocator 简写：
 
 ```sh
 cd /path/to/perf_tools/android/memory
@@ -309,7 +309,7 @@ stack id 并周期性符号化。它重在分析：业务结束后查看最后�
 ```sh
 cd /path/to/perf_tools/android/memory
 
-# QRD8750/QRD876 HWASan Camera Provider
+# QRD8750 HWASan Camera Provider
 python3 memleak_leak_check.py --hwasan
 
 # 普通 Bionic libc 是默认值
@@ -333,7 +333,7 @@ python3 memleak_leak_check.py
 python3 memleak_leak_check.py --hwasan --older-ms 10000
 ```
 
-2026-08-06 QRD876 实测中，首个报告为 321,172,992 bytes/44 allocations；5 秒后
+2026-08-06 HWASan 实测中，首个报告为 321,172,992 bytes/44 allocations；5 秒后
 回落到 1,064,960 bytes/1 allocation，并在之后约 43 秒、10 个连续报告中完全
 稳定，即显示范围内约 99.67% 已释放。最终残留栈经过
 `__allocate_thread_mapping` → `pthread_create` →
@@ -495,7 +495,7 @@ stack 的 bytes/count 是否随循环次数单调增长。还可以使用 `-o` �
   partial unmap 也不能完全等同于简单的 address 删除。分析复杂失败场景时需要
   结合实现限制，不应把一次 `Top 0` 当成“绝对没有泄漏”的证明。
 
-### 手工保存 QRD8750/QRD876 实机日志
+### 手工保存 QRD8750 实机日志
 
 日常执行方向二时优先使用前述 `memleak_leak_check.py`；下面保留没有配套
 `perf_tools` 环境时的底层手工方式。
