@@ -142,6 +142,34 @@ adb shell chmod 0755 /data/local/tmp/memleak
 详见 [设备使用说明与历史记录](docs/android-usage.md) 和
 [迁移与补丁维护](docs/migration.md)。
 
+## GitHub Actions 与 Release
+
+[release.yml](.github/workflows/release.yml) 仅在推送 `v*` tag 时触发，例如
+`v1.0.0`；普通分支提交和 Pull Request 不触发，也没有手动运行入口。
+tag 必须指向包含该工作流的提交。本工作流不自动创建 tag，也不更新源码版本配置。
+
+- Runner：`ubuntu-26.04`，使用 x86_64 主机构建 Android arm64 程序。
+- NDK：固定 r27d（`27.3.13750724`），通过 runner 的 SDK Manager 准备。
+- 构建：显式传入 runner 的 NDK 路径和 `--jobs 4 --self-test`；脚本使用
+  `CMAKE_BUILD_TYPE=Release`，不依赖本机默认的 `/mnt/develop` 路径。
+- 验证：Python 测试、13 项 QEMU 参数测试、全静态 ARM64 ELF/16 KiB 对齐及
+  SHA256 检查。QEMU 不执行 BPF 加载，不能替代真机验证。
+- 发布：对应 tag 的 GitHub Release **仅上传原始可执行文件 `memleak`**，
+  不附加扩展名、不打压缩包；`build-info.json` 和 `SHA256SUMS` 仅作为任务间
+  校验材料，保留在 Actions artifact 中 1 天。
+
+构建任务只有仓库读取权限，发布任务才有 `contents: write`。使用 GitHub
+自动提供的 `GITHUB_TOKEN`，不需要额外配置 PAT、签名密钥或仓库 Secret。
+先创建草稿并上传 `memleak`，下载回读确认字节完全一致后才正式发布。
+失败留下的草稿可通过重跑恢复；已正式发布的 Release 不覆盖，修改后请使用新 tag。
+
+`sources.lock` 中的 BCC 仍按现有配置选择 `latest` 或固定 release。
+项目 tag 与 BCC 版本独立；想固定上游输入时，应在打 tag 前修改 `sources.lock`。
+从 Release 下载后部署到设备，仍需执行 `chmod 0755 memleak`。
+
+GitHub 的 [Ubuntu 26.04 镜像说明](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2604-Readme.md)
+列出了预装的 Java、Android SDK 和 NDK；该镜像目前仍处于公开预览阶段。
+
 ## 测试
 
 ```sh

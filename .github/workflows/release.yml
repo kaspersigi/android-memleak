@@ -1,0 +1,119 @@
+name: Release Android memleak
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  ANDROID_NDK_VERSION: '27.3.13750724'
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Build and validate release memleak
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install build and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            python3 make git cmake ninja-build bpftool qemu-user
+
+      - name: Install pinned Android NDK
+        run: |
+          export JAVA_HOME="${JAVA_HOME_21_X64:?Java 21 is required for sdkmanager}"
+          "${ANDROID_HOME:?Android SDK is required}/cmdline-tools/latest/bin/sdkmanager" \
+            "ndk;$ANDROID_NDK_VERSION"
+
+      - name: Test build scripts
+        run: make test
+
+      - name: Build Release with four parallel jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/build-memleak.py \
+            --ndk "$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" \
+            --jobs 4 --self-test
+          make verify
+
+      - name: Store verified build outputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: memleak-release
+          path: |
+            dist/memleak
+            dist/build-info.json
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  publish:
+    name: Publish memleak to GitHub Release
+    needs: build
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: memleak-release
+          path: dist
+
+      - name: Verify downloaded release binary
+        run: |
+          # Artifact transport does not preserve executable permissions.
+          chmod 0755 dist/memleak
+          make verify
+
+      - name: Upload memleak and publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            if [[ $(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft) != true ]]; then
+              echo "::error::Release $GITHUB_REF_NAME is already published; use a new tag"
+              exit 1
+            fi
+            gh release upload "$GITHUB_REF_NAME" --clobber dist/memleak
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+              --title "$GITHUB_REF_NAME" --generate-notes dist/memleak
+          fi
+
+          # Only the raw executable is a public Release asset.
+          assets=$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets | map(.name) | sort | join(",")')
+          if [[ "$assets" != memleak ]]; then
+            echo "::error::Expected exactly one release asset named memleak"
+            exit 1
+          fi
+
+          # Keep the release a draft until the uploaded bytes are verified.
+          release_probe=$(mktemp -d "$RUNNER_TEMP/memleak-release.XXXXXX")
+          trap 'rm -f -- "$release_probe/memleak"; rmdir -- "$release_probe"' EXIT
+          gh release download "$GITHUB_REF_NAME" --pattern memleak --dir "$release_probe"
+          cmp -- dist/memleak "$release_probe/memleak"
+          gh release edit "$GITHUB_REF_NAME" --draft=false
