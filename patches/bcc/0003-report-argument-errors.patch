@@ -1,0 +1,13 @@
+diff --git a/libbpf-tools/memleak.c b/libbpf-tools/memleak.c
+--- a/libbpf-tools/memleak.c
++++ b/libbpf-tools/memleak.c
+@@ -278,7 +278,8 @@
+ 	};
+ 
+ 	// parse command line args to env settings
+-	if (argp_parse(&argp, argc, argv, 0, NULL, NULL)) {
++	ret = argp_parse(&argp, argc, argv, 0, NULL, NULL);
++	if (ret) {
+ 		fprintf(stderr, "failed to parse args\n");
+ 
+ 		goto cleanup;

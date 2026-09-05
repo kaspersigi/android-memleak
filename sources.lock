@@ -1,0 +1,16 @@
+{
+  "bcc": "latest",
+  "android_api": 35,
+  "libbpf": {
+    "version": "v1.7.0",
+    "commit": "f5dcbae736e5d7f83a35718e01be1a8e3010fa39"
+  },
+  "elfutils": {
+    "version": "0.196",
+    "sha256": "fd5cc6b77ad6773cac93cb3f415f9318ac3b3455eecf801f6b4a742c4f6c7209"
+  },
+  "zstd": {
+    "version": "v1.5.7",
+    "commit": "f8745da6ff1ad1e7bab384bd1f9d742439278e99"
+  }
+}

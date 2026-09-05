@@ -1,0 +1,16 @@
+diff --git a/libbpf-tools/memleak.c b/libbpf-tools/memleak.c
+--- a/libbpf-tools/memleak.c
++++ b/libbpf-tools/memleak.c
+@@ -561,10 +561,10 @@
+ 	case 'o':
+ 		age_ms = argp_parse_long(key, arg, state);
+-		if (age_ms > (LONG_MAX / 1e6) || age_ms < (LONG_MIN / 1e6)) {
++		if (age_ms > (LONG_MAX / 1000000L)) {
+ 			fprintf(stderr, "invalid AGE_MS: %s\n", arg);
+ 			argp_usage(state);
+ 		}
+-		env.min_age_ns = age_ms * 1e6;
++		env.min_age_ns = age_ms * 1000000L;
+ 		break;
+ 	case 'c':
+ 		strncpy(env.command, arg, sizeof(env.command) - 1);

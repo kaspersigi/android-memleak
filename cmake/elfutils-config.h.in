@@ -1,0 +1,23 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Configuration for the libelf subset, not the elfutils command-line tools. */
+#pragma once
+#define PACKAGE_VERSION "@ELFUTILS_VERSION@"
+#define VERSION PACKAGE_VERSION
+#define HAVE_VISIBILITY 1
+#define HAVE_ERR_H 1
+#define HAVE_MREMAP 1
+#define HAVE_SYS_RANDOM_H 1
+#define HAVE_STDATOMIC_H 1
+#cmakedefine01 HAVE_DECL_MEMPCPY
+#cmakedefine01 HAVE_DECL_MEMRCHR
+#cmakedefine01 HAVE_DECL_REALLOCARRAY
+#cmakedefine01 HAVE_DECL_POWEROF2
+#define SIZEOF_LONG 8
+#define USE_ZLIB 1
+#define USE_ZSTD 1
+#define USE_ZSTD_COMPRESS 1
+#define USE_LOCKS 1
+#include <assert.h>
+/* Bionic does not provide glibc's assert_perror. */
+#define assert_perror(errnum) assert((errnum) == 0)
+#include "eu-config.h"

@@ -1,0 +1,43 @@
+diff --git a/libbpf-tools/memleak.c b/libbpf-tools/memleak.c
+--- a/libbpf-tools/memleak.c
++++ b/libbpf-tools/memleak.c
+@@ -5,6 +5,7 @@
+ // 1-Mar-2023   JP Kobryn   Created this.
+ #include <argp.h>
+ #include <errno.h>
++#include <limits.h>
+ #include <signal.h>
+ #include <stdbool.h>
+ #include <stdio.h>
+@@ -40,7 +41,7 @@
+ 	int top_stacks;
+ 	size_t min_size;
+ 	size_t max_size;
+-	char object[32];
++	char object[PATH_MAX];
+ 
+ 	bool wa_missing_free;
+ 	bool percpu;
+@@ -251,7 +252,7 @@
+ 
+ static struct allocation *allocs;
+ 
+-static const char default_object[] = "libc.so.6";
++static const char default_object[] = "/system/lib64/libc.so";
+ 
+ static void print_headers()
+ {
+@@ -591,7 +592,12 @@
+ 		env.max_size = argp_parse_long(key, arg, state);
+ 		break;
+ 	case 'O':
+-		strncpy(env.object, arg, sizeof(env.object) - 1);
++		if (strlen(arg) >= sizeof(env.object)) {
++			fprintf(stderr, "allocator object path is too long (max %zu bytes)\n",
++				sizeof(env.object) - 1);
++			return EINVAL;
++		}
++		strcpy(env.object, arg);
+ 		break;
+ 	case 'P':
+ 		env.percpu = true;

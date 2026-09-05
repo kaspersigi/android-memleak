@@ -1,0 +1,12 @@
+diff --git a/src/libbpf.c b/src/libbpf.c
+--- a/src/libbpf.c
++++ b/src/libbpf.c
+@@ -5078,7 +5078,7 @@
+ 	level = mandatory ? LIBBPF_WARN : LIBBPF_DEBUG;
+ 
+ 	bpffs_path = obj->token_path ?: BPF_FS_DEFAULT_PATH;
+-	bpffs_fd = open(bpffs_path, O_DIRECTORY, O_RDWR);
++	bpffs_fd = open(bpffs_path, O_DIRECTORY | O_RDONLY);
+ 	if (bpffs_fd < 0) {
+ 		err = -errno;
+ 		__pr(level, "object '%s': failed (%s) to open BPF FS mount at '%s'%s\n",

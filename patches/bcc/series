@@ -1,0 +1,4 @@
+# Apply to a pristine upstream BCC release, in this order.
+0001-android-allocator-path.patch
+0002-integer-age-conversion.patch
+0003-report-argument-errors.patch

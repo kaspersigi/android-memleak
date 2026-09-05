@@ -1,21 +1,23 @@
-# Editor's files
+# Editor / OS files
 *.swp
 *.swo
-*.pyc
-.idea
+.idea/
+.DS_Store
+Thumbs.db
 *~
 
-# Build artifacts
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Downloaded sources and build artifacts
+/sources/
 /build/
-cmake-build-debug
-debian/**/*.log
-*critical.log
-obj-x86_64-linux-gnu
-examples/cgroupid/cgroupid
+/dist/
+# Previous-layout artifacts retained locally; no longer written by the builder.
+/out/
+/.cache/
 
-# Output from docker builds
-scripts/docker/output/
-/output/
-
-# UAPI header generated for libbpf package-based builds
-src/cc/compat/linux/bpf.h
+# Agent caches
+.codex/
+.agents/

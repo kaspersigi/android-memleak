@@ -1,7 +1,0 @@
-{
-  "presubmit": [
-    {
-      "name": "libbpf_load_test"
-    }
-  ]
-}
