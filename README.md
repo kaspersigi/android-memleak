@@ -17,12 +17,21 @@
 # Ubuntu 主机依赖（只需安装一次）
 sudo apt install python3 git cmake ninja-build bpftool
 
-export ANDROID_NDK_HOME=/path/to/android-ndk-r27d
+# 本地默认 NDK /mnt/develop/android-ndk-r27d，并行数为 nproc。
 make release
 
-# 同一入口，也可以显式传参
-python3 scripts/build-memleak.py --ndk "$ANDROID_NDK_HOME" --jobs 8
+# 直接运行脚本使用同样的默认值。
+python3 scripts/build-memleak.py
+
+# GitHub Actions 等环境显式指定 NDK 和并行数。
+python3 scripts/build-memleak.py --ndk /path/to/android-ndk-r27d --jobs 4
 ```
+
+NDK 选择顺序为 `--ndk` → `ANDROID_NDK_HOME` → `ANDROID_NDK_ROOT` →
+`/mnt/develop/android-ndk-r27d`。没有参数或环境变量时即可使用本机默认安装；
+路径无效会在下载前报错，不会静默切换到其他 NDK。
+脚本未传 `--jobs` 时执行 `nproc`；`make release` 同样默认使用 `nproc`，
+也可以通过 `make release JOBS=4` 覆盖。构建开始时会打印实际 NDK 和并行数。
 
 默认读取顶层 [sources.lock](sources.lock) 的 `bcc: "latest"`，
 每次在线构建查询 GitHub 最新**正式 release**，解析 tag 到 commit，再下载、

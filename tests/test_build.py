@@ -80,6 +80,109 @@ class BuildTests(unittest.TestCase):
     def test_current_config_valid(self):
         b.validate_config(self.config)
 
+    def make_ndk(self, name):
+        ndk = self.root / name
+        toolchain = ndk / "build/cmake/android.toolchain.cmake"
+        toolchain.parent.mkdir(parents=True)
+        toolchain.write_text("# Test NDK marker\n")
+        return ndk
+
+    def test_ndk_selection_priority(self):
+        default = self.make_ndk("default-ndk")
+        home = self.make_ndk("home-ndk")
+        root = self.make_ndk("root-ndk")
+        explicit = self.make_ndk("explicit-ndk")
+        for value, env_home, env_root, expected in (
+            (str(explicit), str(home), str(root), explicit),
+            (None, str(home), str(root), home),
+            (None, "", str(root), root),
+            (None, "", "", default),
+        ):
+            with self.subTest(expected=expected), patch.object(
+                b, "DEFAULT_NDK", default
+            ), patch.dict(
+                b.os.environ,
+                {"ANDROID_NDK_HOME": env_home, "ANDROID_NDK_ROOT": env_root},
+            ):
+                self.assertEqual(b.ndk_path(value), expected)
+
+    def test_invalid_ndk_does_not_fall_back(self):
+        default = self.make_ndk("default-ndk")
+        missing = self.root / "missing-ndk"
+        with patch.object(b, "DEFAULT_NDK", default), self.assertRaisesRegex(
+            b.BuildError, "Invalid NDK.*missing-ndk"
+        ):
+            b.ndk_path(str(missing))
+        with patch.object(b, "DEFAULT_NDK", default), patch.dict(
+            b.os.environ,
+            {"ANDROID_NDK_HOME": str(missing), "ANDROID_NDK_ROOT": str(default)},
+        ), self.assertRaisesRegex(b.BuildError, "Invalid NDK.*missing-ndk"):
+            b.ndk_path(None)
+
+    def test_jobs_default_uses_nproc(self):
+        with patch.object(b, "run", return_value="12\n") as run:
+            self.assertEqual(b.default_jobs(), 12)
+        run.assert_called_once_with(["nproc"], capture=True)
+
+    def test_invalid_nproc_output_rejected(self):
+        for value in ("", "unknown", "0", "-1", "1.5"):
+            with self.subTest(value=value), patch.object(
+                b, "run", return_value=value
+            ), self.assertRaises(b.BuildError):
+                b.default_jobs()
+
+    def test_missing_nproc_reports_override(self):
+        with patch.object(b, "run", side_effect=FileNotFoundError("nproc")):
+            with self.assertRaisesRegex(b.BuildError, "pass --jobs"):
+                b.default_jobs()
+
+    def test_build_main_defaults_and_explicit_overrides(self):
+        default = self.make_ndk("default-ndk")
+        explicit = self.make_ndk("ci-ndk")
+        resolved = {"bcc": {"version": "v0.37.0", "commit": "a" * 40}}
+        for argv, expected_ndk, expected_jobs in (
+            ([], default, 12),
+            (["--ndk", str(explicit), "--jobs", "4"], explicit, 4),
+        ):
+            with self.subTest(argv=argv), patch.object(
+                b, "DEFAULT_NDK", default
+            ), patch.dict(
+                b.os.environ, {"ANDROID_NDK_HOME": "", "ANDROID_NDK_ROOT": ""}
+            ), patch.object(
+                b, "default_jobs", return_value=12
+            ) as jobs, patch.object(
+                b, "resolve_sources", return_value=resolved
+            ), patch.object(
+                b, "prepare", return_value=(self.root / "source", {})
+            ), patch.object(
+                b, "build"
+            ) as build:
+                self.assertEqual(b.main(argv), 0)
+                args = build.call_args.args[0]
+                self.assertEqual(args.ndk, str(expected_ndk))
+                self.assertEqual(args.jobs, expected_jobs)
+                if argv:
+                    jobs.assert_not_called()
+                else:
+                    jobs.assert_called_once_with()
+
+    def test_nonpositive_jobs_rejected_before_download(self):
+        with patch.object(b, "resolve_sources") as resolve:
+            for value in ("0", "-1"):
+                with self.subTest(value=value), self.assertRaisesRegex(
+                    b.BuildError, "--jobs must be positive"
+                ):
+                    b.main(["--jobs", value])
+            resolve.assert_not_called()
+
+    def test_help_does_not_require_nproc(self):
+        with patch.object(b, "default_jobs", side_effect=AssertionError("nproc")):
+            with patch("sys.stdout", new=io.StringIO()), self.assertRaises(
+                SystemExit
+            ) as result:
+                b.main(["--help"])
+        self.assertEqual(result.exception.code, 0)
+
     def test_top_level_manifest_is_default(self):
         self.assertEqual(b.parser().parse_args([]).config, ROOT / "sources.lock")
         self.assertTrue((ROOT / "CMakeLists.txt").is_file())

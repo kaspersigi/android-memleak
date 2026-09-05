@@ -29,6 +29,7 @@ SOURCES = ROOT / "sources"
 BUILD = ROOT / "build"
 CACHE = ROOT / ".cache/android-memleak"
 OUT = ROOT / "dist"
+DEFAULT_NDK = Path("/mnt/develop/android-ndk-r27d")
 TAG = re.compile(r"v\d+\.\d+\.\d+\Z")
 COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -308,15 +309,24 @@ def ndk_path(value):
         value
         or os.environ.get("ANDROID_NDK_HOME")
         or os.environ.get("ANDROID_NDK_ROOT")
+        or DEFAULT_NDK
     )
-    if not value:
-        raise BuildError(
-            "Set ANDROID_NDK_HOME or pass --ndk /path/to/android-ndk-r27d (or newer)"
-        )
     ndk = Path(value).expanduser().resolve()
     if not (ndk / "build/cmake/android.toolchain.cmake").is_file():
-        raise BuildError(f"Invalid NDK: {ndk}")
+        raise BuildError(f"Invalid NDK: {ndk}; pass --ndk PATH or set ANDROID_NDK_HOME")
     return ndk
+
+
+def default_jobs():
+    try:
+        jobs = int(run(["nproc"], capture=True).strip())
+    except (OSError, ValueError, BuildError) as exc:
+        raise BuildError(
+            "Cannot read nproc; install coreutils or pass --jobs N"
+        ) from exc
+    if jobs < 1:
+        raise BuildError("nproc must report a positive number of build jobs")
+    return jobs
 
 
 def verify_elf(path: Path):
@@ -475,9 +485,12 @@ def parser():
         help="JSON source manifest (sources.lock)",
     )
     p.add_argument("--version", help="override BCC release (v0.37.0 or latest)")
-    p.add_argument("--ndk", help="Android NDK directory; default ANDROID_NDK_HOME/ROOT")
+    p.add_argument(
+        "--ndk",
+        help=f"Android NDK directory; default ANDROID_NDK_HOME/ROOT or {DEFAULT_NDK}",
+    )
     p.add_argument("--bpftool", default="bpftool", help="host bpftool executable")
-    p.add_argument("--jobs", type=int, default=os.cpu_count() or 2)
+    p.add_argument("--jobs", type=int, help="parallel build jobs (default: nproc)")
     p.add_argument(
         "--offline", action="store_true", help="use previously verified cached sources"
     )
@@ -502,7 +515,7 @@ def parser():
 
 def main(argv=None):
     args = parser().parse_args(argv)
-    if args.jobs < 1:
+    if args.jobs is not None and args.jobs < 1:
         raise BuildError("--jobs must be positive")
     if args.verify_only:
         actual = verify_elf(OUT / "memleak")
@@ -527,7 +540,11 @@ def main(argv=None):
         config["bcc"] = args.version
     validate_config(config)
     if not args.prepare_only:
-        ndk_path(args.ndk)  # Fail before downloads if the NDK is missing.
+        # Resolve defaults once and fail before downloads if a tool is missing.
+        args.ndk = str(ndk_path(args.ndk))
+        if args.jobs is None:
+            args.jobs = default_jobs()
+        print(f"NDK: {args.ndk}\nBuild jobs: {args.jobs}", flush=True)
     CACHE.mkdir(parents=True, exist_ok=True)
     with (CACHE / "build.lock").open("w") as lock:
         try:
