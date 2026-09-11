@@ -10,25 +10,26 @@
 
 ## 一键构建
 
-构建主机：Linux x86_64，Python 3.12+、Git、CMake 3.22+、Ninja、主机版
-`bpftool` 和 Android NDK。已验证 NDK r27d、Android API 35；不自动下载 NDK。
+构建主机：Linux x86_64，Python 3.12+、Git、CMake 3.30+、Ninja、主机版
+`bpftool` 和 Android NDK。自有 C++ 代码使用 C++26，CMake 要求编译器支持该标准。
+已验证 NDK r30、Android API 35、CMake 4.2.3；不自动下载 NDK。
 
 ```sh
 # Ubuntu 主机依赖（只需安装一次）
 sudo apt install python3 git cmake ninja-build bpftool
 
-# 本地默认 NDK /mnt/develop/android-ndk-r27d，并行数为 nproc。
+# 本地默认 NDK /mnt/develop/android-ndk-r30，并行数为 nproc。
 make release
 
 # 直接运行脚本使用同样的默认值。
 python3 scripts/build-memleak.py
 
 # GitHub Actions 等环境显式指定 NDK 和并行数。
-python3 scripts/build-memleak.py --ndk /path/to/android-ndk-r27d --jobs 4
+python3 scripts/build-memleak.py --ndk /path/to/android-ndk-r30 --jobs 4
 ```
 
 NDK 选择顺序为 `--ndk` → `ANDROID_NDK_HOME` → `ANDROID_NDK_ROOT` →
-`/mnt/develop/android-ndk-r27d`。没有参数或环境变量时即可使用本机默认安装；
+`/mnt/develop/android-ndk-r30`。没有参数或环境变量时即可使用本机默认安装；
 路径无效会在下载前报错，不会静默切换到其他 NDK。
 脚本未传 `--jobs` 时执行 `nproc`；`make release` 同样默认使用 `nproc`，
 也可以通过 `make release JOBS=4` 覆盖。构建开始时会打印实际 NDK 和并行数。
@@ -104,6 +105,7 @@ dist/                  成功产物 memleak、build-info.json、SHA256SUMS（不
 输入，`build/android-arm64/<指纹>/` 放中间产物，`dist/` 放可交付文件。
 项目只面向 Android arm64，因此 `dist/` 不再重复嵌套 `android-arm64/`。
 
+BCC 的 `trace_helpers.c` 使用 `strtok_r`，以通过 NDK r30 的弃用 API 检查。
 修改补丁请编辑 `patches/`，不要直接修改缓存源码。源码、补丁、NDK
 或构建规则变化会生成独立构建目录，避免旧 object 混入新版本。
 旧版本目录保留用于排查；脚本不会清理用户指定的外部路径。
@@ -149,7 +151,7 @@ adb shell chmod 0755 /data/local/tmp/memleak
 tag 必须指向包含该工作流的提交。本工作流不自动创建 tag，也不更新源码版本配置。
 
 - Runner：`ubuntu-26.04`，使用 x86_64 主机构建 Android arm64 程序。
-- NDK：固定 r27d（`27.3.13750724`），通过 runner 的 SDK Manager 准备。
+- NDK：固定 r30（`30.0.16248370`），通过 runner 的 SDK Manager 准备。
 - 构建：显式传入 runner 的 NDK 路径和 `--jobs 4 --self-test`；脚本使用
   `CMAKE_BUILD_TYPE=Release`，不依赖本机默认的 `/mnt/develop` 路径。
 - 验证：Python 测试、13 项 QEMU 参数测试、全静态 ARM64 ELF/16 KiB 对齐及

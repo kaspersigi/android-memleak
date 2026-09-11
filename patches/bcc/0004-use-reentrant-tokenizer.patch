@@ -1,0 +1,29 @@
+diff --git a/libbpf-tools/trace_helpers.c b/libbpf-tools/trace_helpers.c
+--- a/libbpf-tools/trace_helpers.c
++++ b/libbpf-tools/trace_helpers.c
+@@ -1287,14 +1287,14 @@
+ int split_convert(char *s, const char* delim, void *elems, size_t elems_size,
+ 		  size_t elem_size, convert_fn_t convert)
+ {
+-	char *token;
++	char *token, *saveptr = NULL;
+ 	int ret;
+ 	char *pos = (char *)elems;
+ 
+ 	if (!s || !delim || !elems)
+ 		return -EINVAL;
+ 
+-	token = strtok(s, delim);
++	token = strtok_r(s, delim, &saveptr);
+ 	while (token) {
+ 		if (pos + elem_size > (char*)elems + elems_size)
+ 			return -ENOBUFS;
+@@ -1304,7 +1304,7 @@
+ 			return -ret;
+ 
+ 		pos += elem_size;
+-		token = strtok(NULL, delim);
++		token = strtok_r(NULL, delim, &saveptr);
+ 	}
+ 
+ 	return 0;

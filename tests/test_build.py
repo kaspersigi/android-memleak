@@ -241,7 +241,7 @@ class BuildTests(unittest.TestCase):
     def test_build_failure_keeps_previous_artifact(self):
         ndk = self.root / "ndk"
         ndk.mkdir()
-        (ndk / "source.properties").write_text("Pkg.Revision = 27.3.13750724\n")
+        (ndk / "source.properties").write_text("Pkg.Revision = 30.0.16248370\n")
         output = self.root / "out"
         output.mkdir()
         (output / "memleak").write_bytes(b"previous good binary")
@@ -385,7 +385,7 @@ class BuildTests(unittest.TestCase):
         self.assertEqual((second / "file.txt").read_text(), "newer\n")
 
     def test_current_patch_series(self):
-        self.assertEqual(len(b.patches()), 3)
+        self.assertEqual(len(b.patches()), 4)
         self.assertEqual(len(b.patches("libbpf")), 1)
         self.assertEqual(b.patches("zstd"), [])
 

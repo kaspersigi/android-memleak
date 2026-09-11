@@ -50,7 +50,7 @@ uprobe 挂载。
 现在不需要 AOSP 环境，使用 Android NDK：
 
 ```sh
-# 默认使用 /mnt/develop/android-ndk-r27d 和 nproc 并行数。
+# 默认使用 /mnt/develop/android-ndk-r30 和 nproc 并行数。
 make release
 ```
 

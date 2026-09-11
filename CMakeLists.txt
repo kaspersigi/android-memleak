@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.22)
+cmake_minimum_required(VERSION 3.30)
 project(memleak_android LANGUAGES C CXX ASM)
 
 if(NOT ANDROID OR NOT CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
@@ -11,7 +11,9 @@ foreach(required BCC_SOURCE LIBBPF_SOURCE ELFUTILS_SOURCE ZSTD_SOURCE BPFTOOL EL
 endforeach()
 
 set(CMAKE_C_STANDARD 11)
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 26)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 add_compile_options(-O2 -g -ffunction-sections -fdata-sections)
 
 # Only libelf is needed. Do not build libdw, debuginfod, argp/obstack tools,

@@ -29,7 +29,7 @@ SOURCES = ROOT / "sources"
 BUILD = ROOT / "build"
 CACHE = ROOT / ".cache/android-memleak"
 OUT = ROOT / "dist"
-DEFAULT_NDK = Path("/mnt/develop/android-ndk-r27d")
+DEFAULT_NDK = Path("/mnt/develop/android-ndk-r30")
 TAG = re.compile(r"v\d+\.\d+\.\d+\Z")
 COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -415,7 +415,7 @@ def build(args, config, sources, provenance):
         f"-DELFUTILS_VERSION={config['elfutils']['version']}",
     ]
     args_cmake += [f"-D{name.upper()}_SOURCE={path}" for name, path in sources.items()]
-    # CMake 4 policy compatibility for the unmodified NDK r27 toolchain and
+    # CMake 4 policy compatibility for the NDK toolchain and
     # its nested try_compile projects. The environment reaches nested CMake.
     cmake_env = dict(os.environ, CMAKE_POLICY_VERSION_MINIMUM="3.10")
     run(args_cmake, env=cmake_env)
