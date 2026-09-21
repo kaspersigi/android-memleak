@@ -1,188 +1,223 @@
 # android-memleak
 
-从上游 [BCC release](https://github.com/iovisor/bcc/releases) 构建 Android arm64
-全静态 `memleak`。不需要 AOSP、Soong、`lunch`，也不复用 AOSP 的 `.a` / `.o`。
+Build a fully static Android ARM64 `memleak` from an upstream
+[BCC release](https://github.com/iovisor/bcc/releases). The build requires no
+AOSP checkout, Soong, or `lunch`, and does not reuse AOSP `.a` or `.o` files.
 
-项目由原 BCC/AOSP fork 收敛而来，专注 `libbpf-tools/memleak`，不是 Python
-`tools/memleak.py`，也不是完整 BCC 工具集。项目统一使用 `android-memleak`
-名称，本地检出目录可以继续叫 `bcc`。所有路径均相对于脚本自身解析，
-本地目录后续改名也不影响构建入口。
+This project grew out of a BCC/AOSP fork and now focuses on
+`libbpf-tools/memleak`. It does not build Python `tools/memleak.py` or the full
+BCC tool suite. The project name is `android-memleak`, but an existing local
+checkout can still be named `bcc`. Scripts resolve paths relative to themselves,
+so renaming the checkout does not affect the build entry points.
 
-## 一键构建
+## Quick build
 
-构建主机：Linux x86_64，Python 3.12+、Git、CMake 3.30+、Ninja、主机版
-`bpftool` 和 Android NDK。自有 C++ 代码使用 C++26，CMake 要求编译器支持该标准。
-已验证 NDK r30、Android API 35、CMake 4.2.3；不自动下载 NDK。
+Build host: Linux x86_64 with Python 3.12+, Git, CMake 3.30+, Ninja, a host
+`bpftool`, and the Android NDK. Project-owned C++ code uses C++26, which CMake
+requires the compiler to support. NDK r30, Android API 35, and CMake 4.2.3 have
+been tested. The build does not download the NDK automatically.
 
 ```sh
-# Ubuntu 主机依赖（只需安装一次）
+# Install Ubuntu host dependencies once.
 sudo apt install python3 git cmake ninja-build bpftool
 
-# 本地默认 NDK /mnt/develop/android-ndk-r30，并行数为 nproc。
+# Defaults: NDK at /mnt/develop/android-ndk-r30, parallelism from nproc.
 make release
 
-# 直接运行脚本使用同样的默认值。
+# Calling the script directly uses the same defaults.
 python3 scripts/build-memleak.py
 
-# GitHub Actions 等环境显式指定 NDK 和并行数。
+# Set the NDK and parallelism explicitly in environments such as GitHub Actions.
 python3 scripts/build-memleak.py --ndk /path/to/android-ndk-r30 --jobs 4
 ```
 
-NDK 选择顺序为 `--ndk` → `ANDROID_NDK_HOME` → `ANDROID_NDK_ROOT` →
-`/mnt/develop/android-ndk-r30`。没有参数或环境变量时即可使用本机默认安装；
-路径无效会在下载前报错，不会静默切换到其他 NDK。
-脚本未传 `--jobs` 时执行 `nproc`；`make release` 同样默认使用 `nproc`，
-也可以通过 `make release JOBS=4` 覆盖。构建开始时会打印实际 NDK 和并行数。
+NDK selection order: `--ndk` → `ANDROID_NDK_HOME` → `ANDROID_NDK_ROOT` →
+`/mnt/develop/android-ndk-r30`. Without an argument or environment override, the
+local default is used. An invalid path fails before any downloads; the script
+does not silently switch to another NDK. Without `--jobs`, it uses `nproc`.
+`make release` also defaults to `nproc`; override it with `make release JOBS=4`.
+The selected NDK and job count are printed before the build starts.
 
-默认读取顶层 [sources.lock](sources.lock) 的 `bcc: "latest"`，
-每次在线构建查询 GitHub 最新**正式 release**，解析 tag 到 commit，再下载、
-应用补丁并编译。主机只运行 `bpftool gen skeleton`；用户态和 BPF 都由 NDK
-Clang 编译。libbpf、elfutils/libelf、zstd 从锁定源码构建；Bionic libc、
-libc++、zlib 来自同一 NDK。libelf 保留 zlib/zstd 压缩 ELF 支持。
+The top-level [sources.lock](sources.lock) defaults to `bcc: "latest"`.
+Each online build queries GitHub for the latest **published, non-prerelease BCC
+release**, resolves its tag to a commit, downloads the sources, applies patches,
+and compiles them. The host runs `bpftool gen skeleton`; NDK Clang compiles both
+userspace and BPF code. libbpf, elfutils/libelf, and zstd are built from pinned
+sources. Bionic libc, libc++, and zlib come from the same NDK. libelf retains
+support for zlib/zstd-compressed ELF files.
 
-输出：
+Outputs:
 
-- `dist/memleak`：已 strip 的全静态 ARM64 可执行程序，16 KiB 对齐。
-- `dist/build-info.json`：实际 release、commit、源码/补丁 SHA256、工具链及产物信息。
-- `dist/SHA256SUMS`：产物校验值。
+- `dist/memleak`: stripped, fully static ARM64 executable with 16 KiB alignment.
+- `dist/build-info.json`: resolved release and commit, source/patch SHA-256
+  values, toolchain details, and output metadata.
+- `dist/SHA256SUMS`: output checksums.
 
-`make verify` 检查 ELF 架构、静态链接、16 KiB 对齐及校验值。BPF object 已
-嵌入程序；设备上不需要 NDK、Python、编译工具或独立的 `.bpf.o`。
+`make verify` checks ELF architecture, static linkage, 16 KiB alignment, and
+checksums. The BPF object is embedded in the executable, so the device needs no
+NDK, Python, build tools, or separate `.bpf.o` file.
 
-## 更新、固定版本和离线构建
+## Updates, version pinning, and offline builds
 
 ```sh
-# 固定一个上游正式 release（也可直接修改 sources.lock 的 bcc 字段）
+# Pin an upstream release, or edit the bcc field in sources.lock.
 python3 scripts/build-memleak.py --version v0.37.0
 
-# 恢复自动选择最新正式 release
+# Resume tracking the latest published, non-prerelease release.
 python3 scripts/build-memleak.py --version latest
 
-# 只下载、校验并应用补丁，不需要 NDK
+# Download, verify, and patch sources only; no NDK required.
 make prepare
 
-# 首次在线成功后，同一配置使用缓存重建，完全不访问网络
+# Rebuild the same configuration from an existing cache without network access.
 python3 scripts/build-memleak.py --offline
 
-# 离线重建指定版本，需要此前已在线准备过同样的 --version 配置
+# Requires a previous online preparation with the same --version setting.
 python3 scripts/build-memleak.py --version v0.37.0 --offline
 ```
 
-GitHub 公共 API 有频率限制，必要时设置 `GH_TOKEN` 或 `GITHUB_TOKEN`。
-下载代码不依赖 `gh` 登录，也不读取本机 `gh` 凭据。源码包通过 HTTPS 从官方
-源下载；elfutils 使用配置内的 SHA256，其余使用固定 commit URL并记录下载
-SHA256，缓存复用前再次校验。实际版本信息在 `build-info.json` 中留档。
+GitHub's public API is rate-limited. Set `GH_TOKEN` or `GITHUB_TOKEN` if needed.
+The downloader does not require a `gh` login or read local `gh` credentials.
+Source archives are downloaded over HTTPS from their official sources.
+elfutils uses the configured SHA-256; other downloads use pinned commit URLs
+and record their downloaded SHA-256 values. Cached content is verified again
+before reuse. Resolved versions are recorded in `build-info.json`.
 
-`sources.lock` 使用 JSON 数据格式，不是需要 `source` 执行的 shell 脚本。
-libbpf/elfutils/zstd 的输入保持锁定；`bcc: "latest"` 则有意保留自动跟随
-正式 release 的行为，并非完全固定的构建锁。每次解析后的确切版本写入
-`build/source-lock.json`，成功产物的来源写入 `dist/build-info.json`。
+`sources.lock` is JSON, not a shell script to execute with `source`.
+libbpf/elfutils/zstd inputs remain pinned, while `bcc: "latest"` intentionally
+tracks published releases. This is therefore not a completely immutable build
+lock. Each resolved version is written to `build/source-lock.json`; provenance
+for successful outputs is recorded in `dist/build-info.json`.
 
-**未来上游版本不保证免维护。** 脚本可以自动跟随 release；如果上游修改了
-Android 补丁涉及的代码、libbpf API 或 BPF 结构，补丁/构建会明确失败，
-不会静默跳过、反向应用补丁，也不会以旧源码冒充新版本。
-下载、打补丁、编译、ELF 检查失败时保留上次成功的产物。
+**Future upstream releases may require maintenance.** If upstream changes code
+covered by Android patches, libbpf APIs, or BPF structures, patching or building
+fails explicitly. Patches are not silently skipped or reversed, and old sources
+are not presented as a new version. Download, patch, compilation, or ELF
+validation failures leave the last successful outputs intact.
 
-## 项目结构
+## Project layout
 
 ```text
-sources.lock           上游版本、依赖锁定、Android API（JSON）
-CMakeLists.txt         独立 NDK 静态构建入口
-Makefile               release / prepare / verify / test 入口
-cmake/                 skeleton 生成、libelf 配置模板
-compat/                Android argp、libintl 兼容层
-patches/               BCC/libbpf 补丁与有序 series
-scripts/               build-memleak.py：下载、打补丁、构建、验证
-tests/                 构建脚本回归测试；native/ 为 QEMU 和真机工作负载
-docs/                  迁移说明、设备用法及实测记录
-.cache/                下载缓存（不提交）
-sources/               按内容指纹隔离的已打补丁上游源码（不提交）
-build/                 source-lock.json、编译目录及测试日志（不提交）
-dist/                  成功产物 memleak、build-info.json、SHA256SUMS（不提交）
+sources.lock           Upstream version, pinned dependencies, Android API (JSON)
+CMakeLists.txt         Standalone static NDK build
+Makefile               release / prepare / verify / test entry points
+cmake/                 Skeleton generation and libelf configuration templates
+compat/                Android argp and libintl compatibility layers
+patches/               BCC/libbpf patches and ordered series
+scripts/               build-memleak.py: download, patch, build, and verify
+tests/                 Build regression tests; native/ has QEMU/device workloads
+docs/                  Migration notes, device usage, and validation records
+.cache/                Download cache (ignored)
+sources/               Patched upstream sources isolated by content hash (ignored)
+build/                 source-lock.json, build directories, test logs (ignored)
+dist/                  Successful memleak, build-info.json, SHA256SUMS (ignored)
 ```
 
-采用与 Platform-Tools 独立构建项目相同的职责分层：`sources/` 只放上游
-输入，`build/android-arm64/<指纹>/` 放中间产物，`dist/` 放可交付文件。
-项目只面向 Android arm64，因此 `dist/` 不再重复嵌套 `android-arm64/`。
+As in the standalone Platform-Tools project, `sources/` contains upstream
+inputs, `build/android-arm64/<fingerprint>/` holds intermediate files, and
+`dist/` contains deliverables. Since Android ARM64 is the only target, `dist/`
+does not have another `android-arm64/` subdirectory.
 
-BCC 的 `trace_helpers.c` 使用 `strtok_r`，以通过 NDK r30 的弃用 API 检查。
-修改补丁请编辑 `patches/`，不要直接修改缓存源码。源码、补丁、NDK
-或构建规则变化会生成独立构建目录，避免旧 object 混入新版本。
-旧版本目录保留用于排查；脚本不会清理用户指定的外部路径。
+BCC's `trace_helpers.c` uses `strtok_r` to pass NDK r30's deprecated API checks.
+Edit `patches/` rather than cached sources. Changes to sources, patches, the NDK,
+or build rules create a separate build directory, preventing stale objects
+from entering a new build. Old directories remain available for diagnosis;
+the script does not clean user-specified external paths.
 
-## Android 适配和验证边界
+## Android adaptations and validation scope
 
-- 默认 allocator 为 `/system/lib64/libc.so`。
-- `-O` 支持 `PATH_MAX` 长度的完整 APEX/HWASan 路径，超长明确失败。
-- 保留 `-S` allocator 前缀、stack map/depth 配置、combined map 优化和无效
-  stack id 处理：这些已经在上游 BCC 内，不重复维护一份旧实现。
-- 使用本地维护的 Android argp 兼容层；用户态符号解析使用同一 BCC release
-  的 `memleak.c` 和 helpers，不再混用旧 AOSP helper API。
-- 年龄转换使用整数防溢出；libbpf 的目录 `open()` 调用适配 Bionic 检查。
-- 默认不启用 Rust/blazesym，和原 Android arm64 路线一致。
+- The default allocator is `/system/lib64/libc.so`.
+- `-O` accepts full APEX/HWASan paths up to the `PATH_MAX` limit; longer paths
+  fail explicitly.
+- The `-S` allocator prefix, stack map/depth settings, combined-map optimization,
+  and invalid stack ID handling come from upstream BCC rather than a separate
+  copy of older implementations.
+- A locally maintained Android argp layer provides compatibility. Userspace
+  symbol resolution uses `memleak.c` and helpers from the same BCC release,
+  rather than mixing in older AOSP helper APIs.
+- Allocation age conversion guards against integer overflow; libbpf directory
+  `open()` calls are adapted to Bionic checks.
+- Rust/blazesym is disabled by default, matching the original Android ARM64 path.
 
 ```sh
 adb push dist/memleak /data/local/tmp/memleak
 adb shell chmod 0755 /data/local/tmp/memleak
-# 在有 root 权限的设备 shell 中执行：
+# Run in a root shell on the device:
 /data/local/tmp/memleak -p <PID> \
   -O /apex/com.android.runtime/lib64/bionic/hwasan/libc.so \
   --stack-storage-size 65536 -T 20 1
 ```
 
-应根据目标进程 `/proc/PID/maps` 选择 allocator，不能假设所有进程都用
-普通 Bionic libc。运行依赖设备 root/BPF/BTF/tracefs 能力及 SELinux 策略。
-静态编译及 QEMU 参数测试通过不等于真机 verifier/uprobes 已验证，也不保证
-上游 memleak 的所有边界行为（如失败的 realloc、部分 munmap）已经修复。
+Select the allocator using the target process's `/proc/PID/maps`; not every
+process uses ordinary Bionic libc. Runtime support depends on device root
+access, BPF/BTF/tracefs capabilities, and SELinux policy. Static compilation and
+QEMU argument tests do not establish device verifier/uprobes support or prove
+that all upstream memleak edge cases, such as failed realloc or partial munmap,
+have been fixed.
 
-2026-09-05 的 NDK 产物已在 Android 16 / arm64 / Linux 6.6 真机上验证：
-普通 Bionic 与 HWASan 的 malloc/free、`-C` 聚合、mmap/mremap/munmap 均捕获
-到与受控分配/释放一致的数据，调用栈可解析。Camera Provider 仅验证了短时
-挂载，未执行拍照负载。环境、产物校验值、命令和边界见
-[本次真机验证记录](docs/device-validation-2026-09-05.md)。
+The NDK output tested on 2026-09-05 was validated on an Android 16 / ARM64 /
+Linux 6.6 device. Ordinary Bionic and HWASan malloc/free, `-C` aggregation, and
+mmap/mremap/munmap produced data consistent with controlled allocations and
+frees, with resolvable stacks. Camera Provider testing covered only a short
+attachment, without a photo capture workload. See the
+[device validation record](docs/device-validation-2026-09-05.md) for the
+environment, checksums, commands, and limitations.
 
-详见 [设备使用说明与历史记录](docs/android-usage.md) 和
-[迁移与补丁维护](docs/migration.md)。
+See also [device usage and historical notes](docs/android-usage.md) and
+[migration and patch maintenance](docs/migration.md).
 
-## GitHub Actions 与 Release
+## GitHub Actions and releases
 
-[release.yml](.github/workflows/release.yml) 仅在推送 `v*` tag 时触发，例如
-`v1.0.0`；普通分支提交和 Pull Request 不触发，也没有手动运行入口。
-tag 必须指向包含该工作流的提交。本工作流不自动创建 tag，也不更新源码版本配置。
+[release.yml](.github/workflows/release.yml) runs only when a `v*` tag, such as
+`v1.0.0`, is pushed. Branch commits and pull requests do not trigger it, and
+there is no manual dispatch entry point. The tag must reference a commit that
+contains the workflow. The workflow does not create tags or change the source
+version configuration.
 
-- Runner：`ubuntu-26.04`，使用 x86_64 主机构建 Android arm64 程序。
-- NDK：固定 r30（`30.0.16248370`），通过 runner 的 SDK Manager 准备。
-- 构建：显式传入 runner 的 NDK 路径和 `--jobs 4 --self-test`；脚本使用
-  `CMAKE_BUILD_TYPE=Release`，不依赖本机默认的 `/mnt/develop` 路径。
-- 验证：Python 测试、13 项 QEMU 参数测试、全静态 ARM64 ELF/16 KiB 对齐及
-  SHA256 检查。QEMU 不执行 BPF 加载，不能替代真机验证。
-- 发布：对应 tag 的 GitHub Release **仅上传原始可执行文件 `memleak`**，
-  不附加扩展名、不打压缩包；`build-info.json` 和 `SHA256SUMS` 仅作为任务间
-  校验材料，保留在 Actions artifact 中 1 天。
+- Runner: `ubuntu-26.04`, building Android ARM64 on an x86_64 host.
+- NDK: pinned r30 (`30.0.16248370`), prepared through the runner's SDK Manager.
+- Build: passes the runner's NDK path and `--jobs 4 --self-test` explicitly.
+  The script uses `CMAKE_BUILD_TYPE=Release`, without relying on a local
+  `/mnt/develop` path.
+- Validation: Python tests, 13 QEMU argument tests, fully static ARM64 ELF and
+  16 KiB alignment checks, and SHA-256 verification. QEMU does not load BPF and
+  cannot replace device validation.
+- Publication: the GitHub Release uploads **only the raw `memleak` executable**,
+  with no extension or archive wrapper. `build-info.json` and `SHA256SUMS` are
+  internal verification files carried in a temporary Actions artifact. After
+  publication and asset digest verification, that artifact is deleted; its
+  one-day retention remains a fallback if publication or cleanup fails.
 
-构建任务只有仓库读取权限，发布任务才有 `contents: write`。使用 GitHub
-自动提供的 `GITHUB_TOKEN`，不需要额外配置 PAT、签名密钥或仓库 Secret。
-先创建草稿并上传 `memleak`，下载回读确认字节完全一致后才正式发布。
-失败留下的草稿可通过重跑恢复；已正式发布的 Release 不覆盖，修改后请使用新 tag。
+The build job has read-only repository access. The publish job has
+`contents: write` for releases and `actions: write` for artifact cleanup.
+Both use GitHub's automatically provided `GITHUB_TOKEN`; no extra PAT, signing
+key, or repository secret is required. The workflow creates a draft, uploads
+`memleak`, downloads it again, and checks byte equality before publishing.
+Failed drafts can be recovered by rerunning the workflow while its artifacts
+remain available. After cleanup, rebuild to rerun. Published releases are not
+overwritten; use a new tag for changes.
 
-`sources.lock` 中的 BCC 仍按现有配置选择 `latest` 或固定 release。
-项目 tag 与 BCC 版本独立；想固定上游输入时，应在打 tag 前修改 `sources.lock`。
-从 Release 下载后部署到设备，仍需执行 `chmod 0755 memleak`。
+The BCC entry in `sources.lock` still selects `latest` or a pinned release.
+Project tags are independent of BCC versions. To pin upstream inputs, edit
+`sources.lock` before tagging. After downloading a Release executable to a
+device, run `chmod 0755 memleak`.
 
-GitHub 的 [Ubuntu 26.04 镜像说明](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2604-Readme.md)
-列出了预装的 Java、Android SDK 和 NDK；该镜像目前仍处于公开预览阶段。
+GitHub's [Ubuntu 26.04 image documentation](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2604-Readme.md)
+lists the installed Java, Android SDK, and NDK versions. As of September 2026,
+the image is in public preview.
 
-## 测试
+## Tests
 
 ```sh
 make test
 make verify
 
-# 可选：运行实际 Android 参数解析回归，不加载 BPF、不需要设备或 root
-# 主机需安装 qemu-user
+# Optional: exercise Android argument parsing without loading BPF.
+# Requires qemu-user on the host; no device or root access needed.
 python3 scripts/build-memleak.py --offline --self-test
 ```
 
-仓库构建/兼容代码使用 [Apache-2.0](LICENSE)；下载的第三方源码保留各自的
-许可证（包括 BCC/libbpf、elfutils、zstd 及 NDK notices），不能仅按本仓库
-顶层 LICENSE 理解所有静态链接组件。
+Repository build and compatibility code uses [Apache-2.0](LICENSE). Downloaded
+third-party sources retain their own licenses, including BCC/libbpf, elfutils,
+zstd, and NDK notices. The top-level license alone does not describe the
+licensing of every statically linked component.
